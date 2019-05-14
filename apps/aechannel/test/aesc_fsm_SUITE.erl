@@ -126,7 +126,12 @@ groups() ->
       update_sequence() ++ [check_incorrect_mutual_close]},
      {round_too_low, [sequence], update_sequence()},
      {round_too_high, [sequence], update_sequence()},
-     {state_hash, [sequence], [check_incorrect_create | update_sequence()]}
+     {state_hash, [sequence], [check_incorrect_create | update_sequence()]},
+     {generalized_acounts, [sequence],
+      [
+        create_channel,
+        attach_ga
+      ]}
     ].
 
 update_sequence() ->
@@ -1763,3 +1768,39 @@ check_fsm_state(Fsm) ->
 get_debug(Config) ->
     proplists:get_bool(debug, Config).
 
+attach_ga(Cfg) ->
+    GAs = proplists:get(generalized_acounts, Config),
+    ok.
+
+attach({Owner, OwnerPrivkey}, Contract, AuthFun, Args) ->
+    attach({Owner, OwnerPrivkey}, Contract, AuthFun, Args, #{}).
+
+attach({Owner, OwnerPrivkey}, Contract, AuthFun, Args, Opts) ->
+    case get_contract(Contract) of
+        {ok, #{src := Src, bytecode := C, map := #{type_info := TI}}} ->
+            attach_({Owner, OwnerPrivkey}, Src, C, TI, AuthFun, Args, Opts);
+        _ ->
+            error(bad_contract)
+    end.
+
+attach_({Owner, OwnerPrivkey}, Src, ByteCode, TypeInfo, AuthFun, Args, Opts) ->
+    {ok, Nonce} = rpc(dev1, aec_next_nonce, pick_for_account, [Owner]),
+    Calldata = aega_test_utils:make_calldata(Src, "init", Args),
+    {ok, AuthFunHash} = aeb_abi:type_hash_from_function_name(list_to_binary(AuthFun),
+                                                             TypeInfo),
+    Options1 = maps:merge(#{nonce => Nonce, code => ByteCode,
+                            auth_fun => AuthFunHash, call_data => Calldata},
+                          Opts),
+    AttachTx = aega_test_utils:ga_attach_tx(Owner, Options1),
+
+    ok = rpc(dev1, aec_tx_pool, push, [SignedCloseSoloTx]),
+    S1       = sign_and_apply_tx(Fail, Owner, AttachTx, Opts, S),
+
+    ConKey   = aect_contracts:compute_contract_pubkey(Owner, Nonce),
+    CallKey  = aect_call:id(Owner, Nonce, ConKey),
+    CallTree = aect_test_utils:calls(S1),
+    Call     = aect_call_state_tree:get_call(ConKey, CallKey, CallTree),
+    {{ok, #{res => aect_call:return_type(Call), ct => ConKey}}, S1}.
+
+get_contract(Name) ->
+    aega_test_utils:get_contract(?SOPHIA_FORTUNA_AEVM, Name).
