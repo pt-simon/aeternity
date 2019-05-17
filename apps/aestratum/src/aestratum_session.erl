@@ -31,6 +31,8 @@
 
 -type timer()                         :: {reference(), phase()}.
 
+-type account()                       :: aestratum_user_register:account().
+
 -type extra_nonce()                   :: aestratum_nonce:part_nonce().
 
 -type accept_blocks()                 :: boolean().
@@ -107,6 +109,7 @@
 -record(session, {
           phase                       :: phase(),
           timer                       :: timer() | undefined,
+          account                     :: account() | undefined,
           extra_nonce                 :: extra_nonce() | undefined,
           accept_blocks = false       :: accept_blocks(),
           initial_share_target        :: initial_share_target() | undefined,
@@ -150,6 +153,7 @@ set(max_solve_time, Val, Session) when is_integer(Val) ->
 
 -spec status(session()) -> map().
 status(#session{phase = Phase,
+                account = Account,
                 extra_nonce = ExtraNonce,
                 initial_share_target = InitialShareTarget,
                 max_share_target = MaxShareTarget,
@@ -157,10 +161,26 @@ status(#session{phase = Phase,
                 desired_solve_time = DesiredSolveTime,
                 max_solve_time = MaxSolveTime,
                 jobs = Jobs}) ->
+    ExtraNonce1 =
+        case ExtraNonce of
+            N when N =/= undefined -> aestratum_nonce:to_hex(N);
+            undefined              -> undefined
+        end,
+    InitialShareTarget1 =
+        case InitialShareTarget of
+            IT when IT =/= undefined -> aestratum_target:to_hex(IT);
+            undefined                -> undefined
+        end,
+    MaxShareTarget1 =
+        case MaxShareTarget of
+            MT when MT =/= undefined -> aestratum_target:to_hex(MT);
+            undefined                -> undefined
+        end,
     #{phase => Phase,
-      extra_nonce => aestratum_nonce:to_hex(ExtraNonce),
-      initial_share_target => aestratum_taget:to_hex(InitialShareTarget),
-      max_share_target => aestratum_taget:to_hex(MaxShareTarget),
+      account => Account,
+      extra_nonce => ExtraNonce1,
+      initial_share_target => InitialShareTarget1,
+      max_share_target => MaxShareTarget1,
       share_target_diff_threshold => ShareTargetDiffThreshold,
       desired_solve_time => DesiredSolveTime,
       max_solve_time => MaxSolveTime,
@@ -352,7 +372,7 @@ send_authorize_rsp1({ok, first_worker}, #{id := Id, user := {Account, Worker}},
     %% Job queue is initialized to make it ready to accept client sumbissions.
     ?INFO("send_authorize_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap),
-     Session#session{phase = authorized, timer = undefined,
+     Session#session{phase = authorized, timer = undefined, account = Account,
                      jobs = aestratum_job_queue:new()}};
 send_authorize_rsp1({ok, other_worker}, #{id := Id, user := {Account, Worker}},
                     Session) ->
