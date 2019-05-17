@@ -90,8 +90,11 @@ configure(connection, #{connection := #{max_connections := MaxConnections,
         orelse error(insufficent_extra_nonce_bytes),
     maps:merge(maps:without([connection], Result),
                maps:put(transport, binary_to_atom(Transport, utf8), ConnCfg));
-configure(session, #{session := SessionCfg} = Result) ->
-    maps:merge(maps:without([session], Result), SessionCfg);
+configure(session, #{session := #{desired_solve_time := DesiredSolveTime,
+                                  max_solve_time := MaxSolveTime} = SessionCfg} = Result) ->
+    SessionCfg1 = SessionCfg#{desired_solve_time => DesiredSolveTime * 1000,
+                              max_solve_time => MaxSolveTime * 1000},
+    maps:merge(maps:without([session], Result), SessionCfg1);
 configure(reward, #{reward := #{beneficiaries := PoolShareBins,
                                 reward_last_rounds := LastN,
                                 keys := [{<<"dir">>, KeysDir}]}} = Result) ->
@@ -164,3 +167,4 @@ config_map(KeysSomeVals, M) ->
 
 resolver(#{} = M) ->
     fun (KSD, Acc) -> put_from_default(KSD, M, Acc) end.
+
