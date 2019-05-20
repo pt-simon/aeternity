@@ -202,7 +202,6 @@
    [sc_ws_timeout_open/1,
     sc_ws_attach_initiator/1,
     sc_ws_attach_responder/1,
-		sc_ws_dont_open_ga/1,
     sc_ws_min_depth_not_reached_timeout/1,
     sc_ws_min_depth_is_modifiable/1,
     sc_ws_basic_open_close/1,
@@ -544,16 +543,16 @@ groups() ->
      },
      {generalized_account_initiator, [sequence],
       [sc_ws_attach_initiator,
-       sc_ws_dont_open_ga]
+       sc_ws_basic_open_close]
      },
      {generalized_account_responder, [sequence],
       [sc_ws_attach_responder,
-       sc_ws_dont_open_ga]
+       sc_ws_basic_open_close]
      },
      {generalized_account_both, [sequence],
       [sc_ws_attach_initiator,
        sc_ws_attach_responder,
-       sc_ws_dont_open_ga]
+       sc_ws_basic_open_close]
      }
     ].
 
@@ -5096,17 +5095,6 @@ sc_ws_attach_responder(Config) ->
     #{responder := #{pub_key  := Pubkey,
                      priv_key := Privkey}} = proplists:get_value(participants, Config),
     attach({Pubkey, Privkey}, "simple_auth", "authorize", ["42"]),
-    ok.
-
-sc_ws_dont_open_ga(Config) ->
-    #{initiator := #{pub_key := IPubkey},
-      responder := #{pub_key := RPubkey}} = proplists:get_value(participants, Config),
-
-    IAmt = 8,
-    RAmt = 4,
-
-    ChannelOpts = channel_options(IPubkey, RPubkey, IAmt, RAmt, #{}, Config),
-    {error, rejected} = channel_ws_start(initiator, maps:put(host, <<"localhost">>, ChannelOpts), Config),
     ok.
 
 sc_ws_min_depth_not_reached_timeout(Config) ->

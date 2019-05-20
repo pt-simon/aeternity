@@ -721,7 +721,7 @@ cmd_run(Cmd, Dir, BinDir, Args, Env, FindLocalBin) ->
             {args, Args},
             {cd, Dir}
            ],
-    ct:log("Running command ~p in ~p with ~p", [Cmd, Dir, Args]),
+    ct:log("Running command ~p in ~p with ~p, opts ~p", [Cmd, Dir, Args, Opts]),
     Bin = case FindLocalBin of
 	       true ->
                     os:find_executable(Cmd, filename:join(Dir, BinDir));

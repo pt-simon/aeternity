@@ -111,8 +111,7 @@ is_latest_signed_tx(SignedTx, #state{signed_tx = LatestSignedTx}) ->
 -spec check_initial_update_tx(aetx_sign:signed_tx(), [aesc_offchain_update:update()], state(),
                               aec_trees:trees(), aetx_env:env(), map()) -> ok | {error, atom()}.
 check_initial_update_tx(SignedTx, _Updates, State, _OnChainTrees, _OnChainEnv, _Opts) ->
-    Aetx = aetx_sign:tx(SignedTx),
-    {Mod, Tx} = aetx:specialize_callback(Aetx),
+    {Mod, Tx} = most_inner_tx(SignedTx),
     Checks =
         [ fun() ->
               case Mod of
@@ -155,9 +154,8 @@ check_update_tx(SignedTx, Updates, #state{signed_tx = OldSignedTx}=State,
                 Protocol, OnChainTrees,
                 OnChainEnv, Opts) when OldSignedTx =/= ?NO_TX ->
     lager:debug("check_update_tx(State = ~p)", [State]),
-    Tx = aetx_sign:tx(SignedTx),
-    {Mod, TxI} = aetx:specialize_callback(Tx),
-    lager:debug("Tx = ~p", [Tx]),
+    {Mod, TxI} = most_inner_tx(SignedTx),
+    lager:debug("Tx = ~p", [TxI]),
     case Mod:valid_at_protocol(Protocol, TxI) of
         false -> {error, invalid_at_height};
         true ->
@@ -218,8 +216,7 @@ make_update_tx(Updates, #state{signed_tx = LastSignedTx, trees=Trees},
                Protocol,
                OnChainTrees, OnChainEnv, Opts)
     when LastSignedTx =/= ?NO_TX ->
-    Tx = aetx_sign:tx(LastSignedTx),
-    {Mod, TxI} = aetx:specialize_callback(Tx),
+    {Mod, TxI} = most_inner_tx(LastSignedTx),
     ChannelPubKey = Mod:channel_pubkey(TxI),
 
     NextRound     = Mod:round(TxI) + 1,
@@ -255,7 +252,8 @@ apply_updates(Updates, Round, Trees, OnChainTrees, OnChainEnv, Reserve) ->
                     aetx_env:env(), map()) -> state().
 set_signed_tx(SignedTx, Updates, #state{}=State, OnChainTrees,
               OnChainEnv, Opts) ->
-    set_signed_tx(SignedTx, Updates, State, OnChainTrees, OnChainEnv, Opts, true).
+    set_signed_tx(SignedTx, Updates, State, OnChainTrees, OnChainEnv, Opts,
+                  false).%TODO:domat
 
 
 -spec set_signed_tx(aetx_sign:signed_tx(), [aesc_offchain_update:update()],
@@ -268,8 +266,7 @@ set_signed_tx(SignedTx, Updates, #state{}=State, OnChainTrees,
             true = mutually_signed(SignedTx); % ensure it is mutually signed
         false -> pass
     end,
-    Tx = aetx_sign:tx(SignedTx),
-    case aetx:specialize_callback(Tx) of
+    case most_inner_tx(SignedTx) of
         {aesc_create_tx, _} ->
             State#state{signed_tx = SignedTx, half_signed_tx = ?NO_TX};
         {Mod, TxI} ->
@@ -313,7 +310,7 @@ get_latest_half_signed_tx(#state{half_signed_tx = Tx}) when Tx =/= ?NO_TX ->
 -spec get_latest_signed_tx(state()) -> {non_neg_integer(), aetx_sign:signed_tx()}.
 get_latest_signed_tx(#state{signed_tx = LastSignedTx})
     when LastSignedTx =/= ?NO_TX ->
-    {tx_round(aetx_sign:tx(LastSignedTx)), LastSignedTx}.
+    {tx_round(LastSignedTx), LastSignedTx}.
 
 -spec get_latest_trees(state()) -> aec_trees:trees().
 get_latest_trees(#state{trees = Trees}) ->
@@ -322,10 +319,10 @@ get_latest_trees(#state{trees = Trees}) ->
 -spec get_fallback_state(state()) -> {non_neg_integer(), state()}.
 get_fallback_state(#state{signed_tx = LastSignedTx}=State)
     when LastSignedTx =/= ?NO_TX ->
-    {tx_round(aetx_sign:tx(LastSignedTx)), State#state{half_signed_tx = ?NO_TX}}.
+    {tx_round(LastSignedTx), State#state{half_signed_tx = ?NO_TX}}.
 
-tx_round(Tx) ->
-    {Mod, TxI} = aetx:specialize_callback(Tx),
+tx_round(SignedTx) ->
+    {Mod, TxI} = most_inner_tx(SignedTx),
     Mod:round(TxI).
 
 -spec fallback_to_stable_state(state()) -> state().
@@ -406,3 +403,8 @@ serialize_for_client_tx_or_notx(Tx) ->
     STx = aetx_sign:serialize_to_binary(Tx),
     aeser_api_encoder:encode(transaction, STx).
 
+most_inner_tx(SignedTx) ->
+    case aetx:specialize_callback(aetx_sign:tx(SignedTx)) of
+        {aega_meta_tx, InnerSignedTx} -> most_inner_tx(aega_meta_tx:tx(InnerSignedTx));
+        {CallBack, Tx} -> {CallBack, Tx}
+    end.

@@ -177,7 +177,8 @@
               , ongoing_update = false :: boolean()
               , last_reported_update   :: undefined | non_neg_integer()
               , log = #w{}             :: #w{}
-              , strict_checks = true   :: boolean()
+              % TODO:domat
+              , strict_checks = false  :: boolean()
               }).
 
 -define(TRANSITION_STATE(S),  S=:=awaiting_signature
@@ -749,8 +750,7 @@ awaiting_signature(cast, {?SIGNED, withdraw_tx, Tx} = Msg,
 awaiting_signature(cast, {?SIGNED, ?FND_CREATED, SignedTx} = Msg,
                    #data{role = responder,
                          latest = {sign, ?FND_CREATED, HSCTx, Updates}} = D) ->
-    NewSignedTx = aetx_sign:add_signatures(
-                    HSCTx, aetx_sign:signatures(SignedTx)),
+    NewSignedTx = combine_sigs_or_meta(HSCTx, SignedTx),
     maybe_check_sigs_create(NewSignedTx, Updates, both,
         fun() ->
             D1 = send_funding_signed_msg(
@@ -766,8 +766,7 @@ awaiting_signature(cast, {?SIGNED, ?FND_CREATED, SignedTx} = Msg,
         end, D);
 awaiting_signature(cast, {?SIGNED, ?DEP_CREATED, SignedTx} = Msg,
                    #data{latest = {sign, ?DEP_CREATED, HSCTx, Updates}} = D) ->
-    NewSignedTx = aetx_sign:add_signatures(
-                    HSCTx, aetx_sign:signatures(SignedTx)),
+    NewSignedTx = combine_sigs_or_meta(HSCTx, SignedTx),
     maybe_check_sigs(NewSignedTx, Updates, channel_deposit_tx, not_deposit_tx, both,
         fun() ->
             D1 = send_deposit_signed_msg(NewSignedTx,
@@ -782,8 +781,7 @@ awaiting_signature(cast, {?SIGNED, ?DEP_CREATED, SignedTx} = Msg,
         end, D);
 awaiting_signature(cast, {?SIGNED, ?WDRAW_CREATED, SignedTx} = Msg,
                    #data{latest = {sign, ?WDRAW_CREATED, HSCTx, Updates}} = D) ->
-    NewSignedTx = aetx_sign:add_signatures(
-                    HSCTx, aetx_sign:signatures(SignedTx)),
+    NewSignedTx = combine_sigs_or_meta(HSCTx, SignedTx),
     maybe_check_sigs(NewSignedTx, Updates, channel_withdraw_tx, not_withdraw_tx, both,
         fun() ->
             D1 = send_withdraw_signed_msg(NewSignedTx,
@@ -809,8 +807,7 @@ awaiting_signature(cast, {?SIGNED, ?UPDATE, SignedTx} = Msg,
         end, D);
 awaiting_signature(cast, {?SIGNED, ?UPDATE_ACK, SignedTx} = Msg,
                    #data{latest = {sign, ?UPDATE_ACK, OCTx, Updates}, opts = Opts} = D) ->
-    NewSignedTx = aetx_sign:add_signatures(
-                    OCTx, aetx_sign:signatures(SignedTx)),
+    NewSignedTx = combine_sigs_or_meta(OCTx, SignedTx),
     maybe_check_sigs(NewSignedTx, Updates, channel_offchain_tx, not_offchain_tx, both,
         fun() ->
             D1 = send_update_ack_msg(NewSignedTx, D),
@@ -834,8 +831,7 @@ awaiting_signature(cast, {?SIGNED, ?SHUTDOWN, SignedTx} = Msg,
         end, D);
 awaiting_signature(cast, {?SIGNED, ?SHUTDOWN_ACK, SignedTx} = Msg,
                    #data{latest = {sign, ?SHUTDOWN_ACK, CMTx, Updates}} = D) ->
-    NewSignedTx = aetx_sign:add_signatures(
-                    CMTx, aetx_sign:signatures(SignedTx)),
+    NewSignedTx = combine_sigs_or_meta(CMTx, SignedTx),
     maybe_check_sigs(NewSignedTx, Updates, channel_close_mutual_tx, not_close_mutual_tx, both,
         fun() ->
             D1 = send_shutdown_ack_msg(NewSignedTx, D),
@@ -2035,8 +2031,12 @@ default_nonce(Opts, #data{opts = DOpts}) ->
     try maps:get(nonce, Opts, maps:get(nonce, DOpts))
     catch
         error:_ ->
-            Account = maps:get(acct, Opts),
-            ok(aec_next_nonce:pick_for_account(Account))
+            Pubkey = maps:get(acct, Opts),
+            {value, Account} = aec_chain:get_account(Pubkey),
+            case aec_accounts:type(Account) of
+                basic -> ok(aec_next_nonce:pick_for_account(Pubkey));
+                generalized -> 0
+            end
     end.
 
 %% Note that the default fee will be used as a base for adjustment, once
@@ -2717,12 +2717,12 @@ default_minimum_depth(responder) -> ?MINIMUM_DEPTH.
 start_min_depth_watcher(Type, SignedTx, Updates,
                         #data{watcher = Watcher0,
                               opts = #{minimum_depth := MinDepth}} = D) ->
-    Tx = aetx_sign:tx(SignedTx),
+    {Mod, Tx} = most_inner_tx(SignedTx),
     TxHash = aetx_sign:hash(SignedTx),
     evt({tx_hash, TxHash}),
-    Nonce = aetx:nonce(Tx),
+    Nonce = Mod:nonce(Tx),
     evt({nonce, Nonce}),
-    {OnChainId, D1} = on_chain_id(D, Tx),
+    {OnChainId, D1} = on_chain_id(D, SignedTx),
     case {Type, Watcher0} of
         {funding, undefined} ->
             {ok, Watcher1} = aesc_fsm_min_depth_watcher:start_link(
@@ -2739,9 +2739,22 @@ start_min_depth_watcher(Type, SignedTx, Updates,
 
 on_chain_id(#data{on_chain_id = ID} = D, _) when ID =/= undefined ->
     {ID, D};
-on_chain_id(D, Tx) ->
-    {Mod, Txi} = aetx:specialize_callback(Tx),
-    PubKey = Mod:channel_pubkey(Txi),
+on_chain_id(D, SignedTx) ->
+    PubKey = 
+        case most_inner_tx(SignedTx) of
+            %% initial channel id depends on the auth
+            {aesc_create_tx, Txi} ->
+                Initiator = aesc_create_tx:initiator_pubkey(Txi),
+                Responder = aesc_create_tx:responder_pubkey(Txi),
+                InitiatorAuthId = get_nonce_or_auth_id(SignedTx,
+                                                       Initiator),
+                PK = aesc_channels:pubkey(Initiator,
+                                     InitiatorAuthId,
+                                     Responder),
+                PK;
+            %% all subsequent transactions have embedded the ID
+            {Mod, Txi} -> Mod:channel_pubkey(Txi)
+        end,
     {PubKey, D#data{on_chain_id = PubKey}}.
 
 gproc_register(#data{role = Role, channel_id = ChanId} = D) ->
@@ -2949,6 +2962,7 @@ verify_signatures_channel_create(SignedTx, Who) ->
                         [Initiator, Responder]
             end,
             verify_signatures(Pubkeys, SignedTx);
+        {ga_meta_tx, _} -> ok; %TODO:domat
         _ -> {error, not_create_tx}
     end.
 
@@ -3060,8 +3074,53 @@ account_type(Pubkey) ->
 
 check_accounts(Initiator, Responder) ->
     case {account_type(Initiator), account_type(Responder)} of
-        {{ok, basic}, {ok, basic}}  -> ok;
-        {{ok, generalized}, _}      -> {error, generalized_account};
-        {_, {ok, generalized}}      -> {error, generalized_account};
-        _                           -> {error, not_found}
+        {{ok, _}, {ok, _}}  -> ok;
+        _                   -> {error, not_found}
+    end.
+
+combine_sigs_or_meta(HalfSigned1, HalfSigned2) ->
+    case {is_meta(HalfSigned1), is_meta(HalfSigned2)} of
+        {true, false} ->
+            signed_meta(HalfSigned2, % inner tx
+                        HalfSigned1); % meta tx
+        {false, true} -> 
+            signed_meta(HalfSigned1, % inner tx
+                        HalfSigned2); % meta tx
+        {true, true} ->
+            signed_meta(HalfSigned1, % inner meta tx
+                        HalfSigned2); % meta tx
+        {false, false} ->
+            NewSignedTx = aetx_sign:add_signatures(
+                    HalfSigned1, aetx_sign:signatures(HalfSigned2)),
+            NewSignedTx
+    end.
+
+signed_meta(InnerTx, SignedMeta) ->
+    Aetx = aetx_sign:tx(SignedMeta),
+    {ga_meta_tx, Tx} = aetx:specialize_type(Aetx),
+    MetaTx = aega_meta_tx:set_tx(InnerTx, % inner tx
+                                 Tx),     % meta tx
+    aetx_sign:new(aetx:new(aega_meta_tx, MetaTx), []).
+
+is_meta(SignedTx) ->
+    Tx = aetx_sign:tx(SignedTx),
+    case aetx:specialize_type(Tx) of
+        {ga_meta_tx, _} -> true;
+        _NotMeta        -> false
+    end.
+
+most_inner_tx(SignedTx) ->
+    case aetx:specialize_callback(aetx_sign:tx(SignedTx)) of
+        {aega_meta_tx, MetaTx} -> most_inner_tx(aega_meta_tx:tx(MetaTx));
+        {CallBack, Tx} -> {CallBack, Tx}
+    end.
+
+get_nonce_or_auth_id(SignedTx, Signer) ->
+    case aetx:specialize_callback(aetx_sign:tx(SignedTx)) of
+        {aega_meta_tx, MetaTx} ->
+            case aega_meta_tx:ga_pubkey(MetaTx) =:= Signer of
+                true -> aega_meta_tx:auth_id(MetaTx);
+                false -> get_nonce_or_auth_id(aega_meta_tx:tx(MetaTx), Signer)
+            end;
+        {Mod, Tx} -> Mod:nonce(Tx) 
     end.
