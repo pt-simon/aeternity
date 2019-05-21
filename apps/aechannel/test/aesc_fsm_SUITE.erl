@@ -1478,7 +1478,7 @@ set_amounts(IAmt, RAmt, Map) ->
     Map#{initiator_amount => IAmt, responder_amount => RAmt}.
 
 verify_close_mutual_tx(SignedTx, ChannelId) ->
-    {channel_close_mutual_tx, Tx} = aetx:specialize_type(aetx_sign:tx(SignedTx)),
+    {aesc_close_mutual_tx, Tx} = most_inner_tx(SignedTx),
     {_, ChInfo} = aesc_close_mutual_tx:serialize(Tx),
     true = lists:member(ChannelId,
         [ aeser_id:specialize(ChId, channel)||
@@ -1925,3 +1925,9 @@ make_authdata(#{ prep_fun := F }, TxHash) ->
 
 config() -> get(config).
 config(Cfg) -> put(config, Cfg).
+
+most_inner_tx(SignedTx) ->
+    case aetx:specialize_callback(aetx_sign:tx(SignedTx)) of
+        {aega_meta_tx, MetaTx} -> most_inner_tx(aega_meta_tx:tx(MetaTx));
+        {CallBack, Tx} -> {CallBack, Tx}
+    end.

@@ -1942,9 +1942,8 @@ close_mutual_tx_for_signing(D) ->
 %% validate the tx received from the initiating side. The critical parts to
 %% validate are the state-related ones. Nonce, fee and origin are copied from
 %% the original. Once validated, the 'fake' tx is discarded.
-fake_close_mutual_tx(RealCloseTx, D) ->
+fake_close_mutual_tx(Mod, Tx, D) ->
     OtherAccount = other_account(D),
-    {Mod, Tx} = aetx:specialize_callback(RealCloseTx),
     Nonce  = Mod:nonce(Tx),
     Fee    = Mod:fee(Tx),
     From   = Mod:origin(Tx),
@@ -2199,7 +2198,7 @@ check_deposit_created_msg(#{ channel_id := ChanId
                           #data{on_chain_id = ChanId} = Data) ->
     Updates = [aesc_offchain_update:deserialize(U) || U <- UpdatesBin],
     SignedTx = aetx_sign:deserialize_from_binary(TxBin),
-    case check_tx_and_verify_signatures(SignedTx, Updates, channel_deposit_tx,
+    case check_tx_and_verify_signatures(SignedTx, Updates, aesc_deposit_tx,
                                         Data,
                                         [other_account(Data)],
                                         not_deposit_tx) of
@@ -2223,7 +2222,7 @@ check_deposit_signed_msg(#{ channel_id := ChanId
                           #data{on_chain_id = ChanId,
                                 latest = {ack, deposit_tx, _, Updates}} = Data) ->
     SignedTx = aetx_sign:deserialize_from_binary(TxBin),
-    case check_tx_and_verify_signatures(SignedTx, Updates, channel_deposit_tx,
+    case check_tx_and_verify_signatures(SignedTx, Updates, aesc_deposit_tx,
                                         Data,
                                         both_accounts(Data),
                                         not_deposit_tx) of
@@ -2301,7 +2300,7 @@ check_withdraw_created_msg(#{ channel_id := ChanId
                   #data{ on_chain_id = ChanId } = Data) ->
     Updates = [aesc_offchain_update:deserialize(U) || U <- UpdatesBin],
     SignedTx = aetx_sign:deserialize_from_binary(TxBin),
-    case check_tx_and_verify_signatures(SignedTx, Updates, channel_withdraw_tx,
+    case check_tx_and_verify_signatures(SignedTx, Updates, aesc_withdraw_tx,
                                         Data,
                                         pubkeys(other_participant, Data),
                                         not_withdraw_tx) of
@@ -2326,7 +2325,7 @@ check_withdraw_signed_msg(#{ channel_id := ChanId
                                 latest = Latest} = Data) ->
     {ack, withdraw_tx, _, Updates} = Latest,
     SignedTx = aetx_sign:deserialize_from_binary(TxBin),
-    case check_tx_and_verify_signatures(SignedTx, Updates, channel_withdraw_tx,
+    case check_tx_and_verify_signatures(SignedTx, Updates, aesc_withdraw_tx,
                                         Data,
                                         pubkeys(both, Data),
                                         not_withdraw_tx) of
@@ -2400,7 +2399,7 @@ check_update_msg_(Type, #{ channel_id := ChanId
 check_signed_update_tx(Type, SignedTx, Updates,
                        #data{state = State, opts = Opts} = D) ->
     lager:debug("check_signed_update_tx(~p)", [SignedTx]),
-    case check_tx_and_verify_signatures(SignedTx, Updates, channel_offchain_tx,
+    case check_tx_and_verify_signatures(SignedTx, Updates, aesc_offchain_tx,
                                         D,
                                         pubkeys(other_participant, D), not_offchain_tx) of
         ok ->
@@ -2453,7 +2452,7 @@ check_signed_update_ack_tx(SignedTx, Msg,
     {ack, ?UPDATE, _, Updates} = Latest,
     HalfSignedTx = aesc_offchain_state:get_latest_half_signed_tx(State),
     try  ok = check_update_ack_(SignedTx, HalfSignedTx),
-         case check_tx_and_verify_signatures(SignedTx, Updates, channel_offchain_tx,
+         case check_tx_and_verify_signatures(SignedTx, Updates, aesc_offchain_tx,
                                              D,
                                              pubkeys(both, D), not_offchain_tx) of
               ok ->
@@ -2552,15 +2551,15 @@ check_shutdown_msg(#{channel_id := ChanId,
                    #data{on_chain_id = ChanId} = D) ->
     Updates = [],
     SignedTx = aetx_sign:deserialize_from_binary(TxBin),
-    case check_tx_and_verify_signatures(SignedTx, Updates, channel_close_mutual_tx,
+    case check_tx_and_verify_signatures(SignedTx, Updates, aesc_close_mutual_tx,
                                         D,
                                         [other_account(D)],
                                         not_close_mutual_tx) of
         ok ->
-            RealCloseTx = aetx_sign:tx(SignedTx),
-            {ok, FakeCloseTx, []} = fake_close_mutual_tx(RealCloseTx, D),
+            {aesc_close_mutual_tx, RealTxI} = most_inner_tx(SignedTx),
+            {ok, FakeCloseTx, []} = fake_close_mutual_tx(aesc_close_mutual_tx,
+                                                         RealTxI, D),
             {channel_close_mutual_tx, FakeTxI} = aetx:specialize_type(FakeCloseTx),
-            {channel_close_mutual_tx, RealTxI} = aetx:specialize_type(RealCloseTx),
             case (serialize_close_mutual_tx(FakeTxI) ==
                       serialize_close_mutual_tx(RealTxI)) of
                 true ->
@@ -2580,7 +2579,7 @@ check_shutdown_ack_msg(#{data       := #{tx := TxBin},
                          block_hash := ?NOT_SET_BLOCK_HASH} = Msg,
                        #data{latest = {shutdown, MySignedTx, _Updates}} = D) ->
     SignedTx = aetx_sign:deserialize_from_binary(TxBin),
-    case check_tx_and_verify_signatures(SignedTx, [], channel_close_mutual_tx,
+    case check_tx_and_verify_signatures(SignedTx, [], aesc_close_mutual_tx,
                                         D,
                                         both_accounts(D),
                                         not_close_mutual_tx) of
@@ -2592,7 +2591,7 @@ check_shutdown_ack_msg(#{data       := #{tx := TxBin},
 
 check_shutdown_msg_(SignedTx, MySignedTx, Msg, D) ->
     %% TODO: More thorough checking
-    case (aetx_sign:tx(SignedTx) == aetx_sign:tx(MySignedTx)) of
+    case (most_inner_tx(SignedTx) =:= most_inner_tx(MySignedTx)) of
         true ->
             {ok, SignedTx, log(rcv, ?SHUTDOWN_ACK, Msg, D)};
         false ->
@@ -2967,6 +2966,8 @@ verify_signatures_channel_create(SignedTx, Who) ->
     end.
 
 verify_signatures(Pubkeys, SignedTx) ->
+    ok;
+verify_signatures(Pubkeys, SignedTx) ->
     %%  aetx_sign:verify/2 actually needs aec_trees:trees() so we use
     %%  aetx_sign:verify_half_signed/2 instead
     case aetx_sign:verify_half_signed(Pubkeys, SignedTx) of
@@ -2975,19 +2976,18 @@ verify_signatures(Pubkeys, SignedTx) ->
         _ -> {error, bad_signature}
     end.
 
-check_tx_and_verify_signatures(SignedTx, Updates, Type, Data, Pubkeys, ErrTypeMsg) ->
+check_tx_and_verify_signatures(SignedTx, Updates, Mod, Data, Pubkeys, ErrTypeMsg) ->
     ChannelPubkey = cur_channel_id(Data),
     ExpectedRound = next_round(Data),
     #data{state = State, opts = Opts} = Data,
-    Aetx = aetx_sign:tx(SignedTx),
-    case aetx:specialize_type(Aetx) of
-        {Type, _Tx} -> % check type
-            case call_cb(Aetx, channel_pubkey, []) of
+    case most_inner_tx(SignedTx) of
+        {Mod, Tx} -> % same callback module
+            case Mod:channel_pubkey(Tx) of
                 ChannelPubkey -> % expected pubkey
                     CorrectRound =
-                        case Type of
-                            channel_close_mutual_tx -> true; % no round here
-                            _ -> tx_round(Aetx) =:= ExpectedRound
+                        case Mod of
+                            aesc_close_mutual_tx -> true; % no round here
+                            _ -> Mod:round(Tx) =:= ExpectedRound
                         end,
                     case CorrectRound of
                         false ->
