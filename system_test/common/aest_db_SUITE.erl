@@ -16,7 +16,9 @@
          minerva_node_with_epoch_db_can_reuse_db_of_roma_node/1,
          node_can_reuse_db_of_roma_node/1,
          node_can_reuse_db_of_minerva_node_with_epoch_db/1,
-         minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node/1
+         minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node/1,
+         minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node_with_force_progress_tx/1,
+         node_can_reuse_db_of_minerva_node_with_channels_update_as_tuple_force_progress_tx/1
         ]).
 
 %=== INCLUDES ==================================================================
@@ -49,7 +51,9 @@ all() -> [
           minerva_node_with_epoch_db_can_reuse_db_of_roma_node,
           node_can_reuse_db_of_roma_node,
           node_can_reuse_db_of_minerva_node_with_epoch_db,
-          minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node
+          minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node,
+          minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node_with_force_progress_tx,
+          node_can_reuse_db_of_minerva_node_with_channels_update_as_tuple_force_progress_tx
          ].
 
 init_per_suite(Config) ->
@@ -101,6 +105,22 @@ minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node(Cfg) -
     Test = #db_reuse_test_spec{
               create = fun minerva_node_with_channels_update_as_tuple_mining_spec/2,
               reuse = fun minerva_node_with_channels_update_as_tuple_spec/2},
+    node_can_reuse_db_of_other_node_(Test, Cfg).
+
+minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node_with_force_progress_tx(Cfg) ->
+    Test = #db_reuse_test_spec{
+              create = fun minerva_node_with_channels_update_as_tuple_spec/2,
+              populate = fun populate_db_with_channels_force_progress_tx/2,
+              reuse = fun minerva_node_with_channels_update_as_tuple_spec/2,
+              assert = fun(_,_,_) -> todo end},
+    node_can_reuse_db_of_other_node_(Test, Cfg).
+
+node_can_reuse_db_of_minerva_node_with_channels_update_as_tuple_force_progress_tx(Cfg) ->
+    Test = #db_reuse_test_spec{
+              create = fun minerva_node_with_channels_update_as_tuple_spec/2,
+              populate = fun populate_db_with_channels_force_progress_tx/2,
+              reuse = fun node_spec/2,
+              assert = fun(_,_,_) -> todo end},
     node_can_reuse_db_of_other_node_(Test, Cfg).
 
 %=== INTERNAL FUNCTIONS ========================================================
@@ -231,3 +251,8 @@ genesis_accounts() ->
     PatronPubkey = <<206,167,173,228,112,201,249,157,157,78,64,8,128,168,111,29,73,187,68,75,98,241,26,158,187,100,187,207,235,115,254,243>>,
     PatronAddress = aeser_api_encoder:encode(account_pubkey, PatronPubkey),
     [{PatronAddress, 123400000000000000000000000000}].
+
+populate_db_with_channels_force_progress_tx(NodeName, Cfg) ->
+    #{ public := PubKey, secret := PrivKey } = enacl:sign_keypair(),
+    foo = aest_nodes:post_force_progress_tx(NodeName, PrivKey, TxArgs),
+    _DbFingerprint = exit(not_yet_implemented).
