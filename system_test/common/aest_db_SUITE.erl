@@ -18,7 +18,7 @@
          node_can_reuse_db_of_minerva_node_with_epoch_db/1,
          minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node/1,
          minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node_with_force_progress_tx/1,
-         node_can_reuse_db_of_minerva_node_with_channels_update_as_tuple_force_progress_tx/1
+         node_can_reuse_db_of_minerva_node_with_channels_update_as_tuple_with_force_progress_tx/1
         ]).
 
 %=== INCLUDES ==================================================================
@@ -53,7 +53,7 @@ all() -> [
           node_can_reuse_db_of_minerva_node_with_epoch_db,
           minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node,
           minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node_with_force_progress_tx,
-          node_can_reuse_db_of_minerva_node_with_channels_update_as_tuple_force_progress_tx
+          node_can_reuse_db_of_minerva_node_with_channels_update_as_tuple_with_force_progress_tx
          ].
 
 init_per_suite(Config) ->
@@ -115,7 +115,7 @@ minerva_node_with_channels_update_as_tuple_can_reuse_db_of_analogous_node_with_f
               assert = fun(_,_,_) -> todo end},
     node_can_reuse_db_of_other_node_(Test, Cfg).
 
-node_can_reuse_db_of_minerva_node_with_channels_update_as_tuple_force_progress_tx(Cfg) ->
+node_can_reuse_db_of_minerva_node_with_channels_update_as_tuple_with_force_progress_tx(Cfg) ->
     Test = #db_reuse_test_spec{
               create = fun minerva_node_with_channels_update_as_tuple_spec/2,
               populate = fun populate_db_with_channels_force_progress_tx/2,
